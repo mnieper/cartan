@@ -1,0 +1,3 @@
+[submodule "scheme-libraries"]
+	path = scheme-libraries
+	url = https://github.com/scheme-libraries/scheme-libraries.git
