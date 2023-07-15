@@ -2,7 +2,6 @@
 
 ;;; Copyright © Marc Nieper-Wißkirchen (2023).
 
-
 (library (cartan start)
   (export
     start)

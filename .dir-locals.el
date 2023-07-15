@@ -15,6 +15,8 @@
 	  (put 'guard 'scheme-indent-function 1)
 	  (put 'rec 'scheme-indent-function 1)
           (put 'test-datums 'scheme-indent-function 'defun)
+          (put 'record-writer 'scheme-indent-function 1)
+          (put 'expression-writer 'scheme-indent-function 1)
 	  (put 'with-implicit 'scheme-indent-function 1)
 	  (put 'with-syntax 'scheme-indent-function 1)
 	  (font-lock-add-keywords
