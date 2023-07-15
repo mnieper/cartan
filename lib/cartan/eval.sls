@@ -7,8 +7,16 @@
     eval)
   (import
     (rnrs)
+    (only (rnrs r5rs)
+      delay
+      force)
     (prefix (rnrs eval) rnrs:)
-    (scheme-libraries))
+    (scheme-libraries)
+    (cartan parse))
 
   ;; FIXME
-  (define eval values))
+  (define/who eval
+    (define environment
+      (delay (rnrs:environment '(rnrs))))
+    (lambda (x)
+      (rnrs:eval (parse x) (force environment)))))
