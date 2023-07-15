@@ -24,7 +24,24 @@
   ;; Expressions
 
   (define-record-type expression
-    (opaque #t))
+    (opaque #t)
+    (fields context))
+
+  (define/who ->expression
+    (lambda (obj)
+      (cond
+       [(number? obj) obj]
+       [(symbol? obj)
+        (cond
+         [(context-ref-symbol (current-context) obj)]
+         [else (assertion-violation who "undefined symbol" obj)])]
+       [(expression? obj)
+        (unless (eq? (expression-context obj)
+                     (current-context))
+          (assertion-violation who "expression out of context" obj))
+        obj]
+       [else
+        (assertion-violation who "not an expression" obj)])))
 
   (define expression-writers '())
 
@@ -40,40 +57,85 @@
 
   (define expression-write
     (lambda (r p wr)
-      (if (number? r)
-          (wr r p)
-          (let f ([writers expression-writers])
-            (if (null? writers)
-                (display "#<expression>")
-                (if ((caar writers) r)
-                    ((cdar writers) r p wr)
-                    (f (cdr writers))))))))
+      (let ([r (->expression r)])
+        (if (number? r)
+            (wr r p)
+            (let f ([writers expression-writers])
+              (if (null? writers)
+                  (display "#<expression>")
+                  (if ((caar writers) r)
+                      ((cdar writers) r p wr)
+                      (f (cdr writers)))))))))
 
   ;; Variables
 
   (define-record-type variable
     (parent expression)
-    (fields name))
+    (fields name)
+    (protocol
+      (lambda (pargs->new)
+        (lambda (name)
+          (define ctx (current-context))
+          (let ([var ((pargs->new ctx) name)])
+            (context-declare-symbol! ctx name var)
+            var)))))
 
   ;;  Products
 
   (define-record-type product
     (parent expression)
-    (fields factors))
+    (fields factors)
+    (protocol
+      (lambda (pargs->new)
+        (lambda (x*)
+          ((pargs->new (current-context)) x*)))))
 
   (define/who *
     (lambda x*
-      (for-all
-       (lambda (x)
-         (unless (or (number? x) (expression? x))
-           (assertion-violation who "invalid expression" x)))
-       x*)
-      (cond
-       [(null? x*)
-        1]
-       [(null? (cdr x*))
-        (car x*)]
-       [else (make-product x*)])))
+      (let [(x* (map ->expression x*))]
+        (cond
+         [(null? x*)
+          1]
+         [(null? (cdr x*))
+          (car x*)]
+         [else (make-product x*)]))))
+
+  ;; Contexts
+
+  (define-record-type context
+    (opaque #t)
+    (fields symbols)
+    (protocol
+      (lambda (new)
+        (lambda ()
+          (new (make-symbol-table))))))
+
+  (define make-symbol-table
+    (lambda ()
+      (make-hashtable symbol-hash symbol=?)))
+
+  (define/who context-declare-symbol!
+    (lambda (ctx sym val)
+      (hashtable-update! (context-symbols ctx)
+                         sym
+                         (lambda (old-val)
+                           (when old-val
+                             (assertion-violation who "symbol already declared" ctx sym))
+                           val)
+                         #f)))
+
+  (define context-ref-symbol
+    (lambda (ctx sym)
+      (hashtable-ref (context-symbols ctx) sym #f)))
+
+  (define/who current-context
+    (make-thread-parameter (make-context)
+      (lambda (ctx)
+        (unless (context? ctx)
+          (assertion-violation who "invalid context" ctx))
+        ctx)))
+
+  ;; Record writers
 
   (record-writer (record-type-descriptor expression) expression-write)
 
