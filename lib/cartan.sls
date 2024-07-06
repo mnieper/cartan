@@ -6,9 +6,12 @@
   (export
     define-variable
     expression-writer
+    +
     *)
   (import
-    (except (rnrs) *)
+    (except (rnrs)
+      +
+      *)
     (scheme-libraries))
 
   (define-syntax/who define-variable
@@ -80,6 +83,26 @@
             (context-declare-symbol! ctx name var)
             var)))))
 
+  ;; Sums
+
+  (define-record-type sum
+    (parent expression)
+    (fields summands)
+    (protocol
+      (lambda (pargs->new)
+        (lambda (x*)
+          ((pargs->new (current-context)) x*)))))
+
+  (define/who +
+    (lambda x*
+      (let [(x* (map ->expression x*))]
+        (cond
+         [(null? x*)
+          0]
+         [(null? (cdr x*))
+          (car x*)]
+         [else (make-sum x*)]))))
+
   ;;  Products
 
   (define-record-type product
@@ -99,6 +122,10 @@
          [(null? (cdr x*))
           (car x*)]
          [else (make-product x*)]))))
+
+  ;; Differentiation
+
+
 
   ;; Contexts
 
@@ -142,6 +169,16 @@
   (expression-writer (record-type-descriptor variable)
     (lambda (r p wr)
       (wr (variable-name r) p)))
+
+  (expression-writer (record-type-descriptor sum)
+    (lambda (r p wr)
+      (display "(+" p)
+      (for-each
+        (lambda (x)
+          (write-char #\space p)
+          (expression-write x p wr))
+        (sum-summands r))
+      (display ")" p)))
 
   (expression-writer (record-type-descriptor product)
     (lambda (r p wr)
