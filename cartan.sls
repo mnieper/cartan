@@ -5,6 +5,9 @@
     expression
     unquote
     define-expression-syntax
+    type
+    expression-type
+    expression<?
     ;; Variables
     make-variable
     variable?
@@ -23,6 +26,7 @@
     sum-right
     flatten-sum
     distribute-product
+    collect-sum
     ;; Output
     show)
   (import
@@ -67,13 +71,64 @@
                   (syntax-violation who "invalid expression syntax" stx x)])]
                [k
                 (identifier? #'k)
-                ;; TODO
-                (assert #f)]
+                #''k]
                [e
                 (number? (syntax->datum #'e))
                 #'e]
                [_ (syntax-violation who "invalid expression syntax" stx x)])))]
         [_ (syntax-violation who "invalid syntax" stx)])))
+
+  (define-enumeration type
+    (real variable product sum)
+    type-set)
+
+  (define expression-type
+    (lambda (x)
+      (cond
+       [(real? x) (type real)]
+       [(symbol? x) (type variable)]
+       [(product? x) (type product)]
+       [(sum? x) (type sum)]
+       [else (assert #f)])))
+
+  (define expression<?
+    (lambda (x y)
+      (cond
+       [(real? x)
+        (or (not (real? y))
+            (< x y))]
+       [(real? y) #f]
+       [(product? x) (product<? x y)]
+       [(product? y) (product<? x y)]
+       [(or (sum? x) (sum? y))
+        (sum<? x y)]
+       [(symbol<? x y)])))
+
+  (define expression*<?
+    (lambda (x* y*)
+      (let f ([x* (reverse x*)]
+              [y* (reverse y*)])
+        (cond
+         [(null? x*) (not (null? y*))]
+         [(null? y*) #f]
+         [else
+          (let ([x (car x*)] [x* (cdr x*)]
+                [y (car y*)] [y* (cdr y*)])
+            (or (expression<? x y)
+                (and (not (expression<? y x))
+                     (f x* y*))))]))))
+
+  (define symbol<?
+    (lambda (x y)
+      (string<? (symbol->string x) (symbol->string y))))
+
+  (define product<?
+    (lambda (x y)
+      (expression*<? (factors x) (factors y))))
+
+  (define sum<?
+    (lambda (x y)
+      (expression*<? (summands x) (summands y))))
 
   ;; Variables
 
@@ -114,6 +169,14 @@
       (syntax-case stx ()
         [(_ x ...)
          #'(mul (expression x) ...)])))
+
+  (define factors
+    (lambda (x)
+      (cond
+       [(eqv? x 1) (list)]
+       [(product? x)
+        (cons (product-left x) (factors (product-right x)))]
+       [else (list x)])))
 
   (define flatten-product
     (lambda (x)
@@ -183,6 +246,38 @@
                 x* z*))
              0 y*))
           x)))
+
+  (define collect-sum
+    (lambda (x)
+      (fold-right
+       (lambda (y z)
+         (let f ([y y] [z z])
+           (cond
+            [(sum? z)
+             (let ([w (sum-left z)])
+               (cond
+                ;; FIXME: Add like terms.
+                [(expression<? y w)
+                 (make-sum y z)]
+                [(expression<? w y)
+                 (make-sum w (f y (sum-right z)))
+                 ]
+                [else
+                 ;; FIXME: Put together.
+                 (make-sum y z)]))]
+            [(eqv? z 0)
+             y]
+            [else
+             (cond
+              ;; FIXME: Add like terms.
+              [(expression<? y z)
+               (make-sum y z)]
+              [(expression<? z y)
+               (make-sum z y)]
+              [else
+               ;; FIXME: Put together.
+               (make-sum y z)])])))
+       0 (summands (flatten-sum x)))))
 
   ;; Output
 
