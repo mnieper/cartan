@@ -1,42 +1,85 @@
+#!chezscheme
 (library (cartan)
   (export
+    ;; Expressions
+    expression
+    unquote
+    define-expression-syntax
+    ;; Variables
     make-variable
     variable?
     variable-name
     define-variable
-    (rename (%* *))
+    ;; Products
+    *
     product?
-    product-factors
+    product-left
+    product-right
     flatten-product
+    ;; Sums
+    +
+    sum?
+    sum-left
+    sum-right
+    flatten-sum
+    distribute-product
+    ;; Output
     show)
   (import
-    (rnrs))
+    (chezscheme))
 
-  (define-record-type expression)
+  ;; Expressions
+
+  (define-record-type complex-expression)
+
+  (define-syntax expression-transformer
+    (lambda (stx)
+      (define who 'expression-transformer)
+      (syntax-violation who "invalid syntax" stx)))
+
+  (define-syntax define-expression-syntax
+    (lambda (stx)
+      (syntax-case stx ()
+        [(_ name transformer)
+         (identifier? #'name)
+         #'(define-property name expression-transformer
+             (let ([proc transformer])
+               (unless (procedure? proc)
+                 (assertion-violation 'define-expression-syntax "invalid transformer" proc))
+               proc))])))
+
+  (define-syntax expression
+    (lambda (stx)
+      (define who 'expression)
+      (syntax-case stx ()
+        [(_ x)
+         (lambda (lookup)
+           (let ([x #'x])
+             (syntax-case x (unquote)
+               [(unquote e) #'e]
+               [(k a ...)
+                (identifier? #'k)
+                (cond
+                 [(lookup #'k #'expression-transformer) =>
+                  (lambda (proc)
+                    (proc x))]
+                 [else
+                  (syntax-violation who "invalid expression syntax" stx x)])]
+               [k
+                (identifier? #'k)
+                ;; TODO
+                (assert #f)]
+               [e
+                (number? (syntax->datum #'e))
+                #'e]
+               [_ (syntax-violation who "invalid expression syntax" stx x)])))]
+        [_ (syntax-violation who "invalid syntax" stx)])))
+
+  ;; Variables
 
   (define-record-type variable
-    (parent expression)
+    (parent complex-expression)
     (fields name))
-
-  (define-record-type product
-    (parent expression)
-    (fields factors))
-
-  (define %*
-    (case-lambda
-      [() 1]
-      [(x) x]
-      [(x y) (make-product (list x y))]
-      [(x y z . z*) (make-product (cons* x y z z*))]))
-
-  (define flatten-product
-    (lambda (x)
-      (apply
-       %*
-       (let f ([x x] [x* '()])
-         (if (product? x)
-             (fold-right f x* (product-factors x))
-             (cons x x*))))))
 
   (define-syntax define-variable
     (lambda (stx)
@@ -44,6 +87,104 @@
         [(_ name)
          (identifier? #'name)
          #'(define name (make-variable 'name))])))
+
+  ;; Products
+
+  (define-record-type product
+    (parent complex-expression)
+    (fields left right))
+
+  (define mul
+    (case-lambda
+      [() 1]
+      [(x) x]
+      [(x y)
+       (if (eqv? y 1)
+           x
+           (make-product x y))]
+      [(x y z . z*)
+       (make-product x
+                     (let f ([y y] [z z] [z* z*])
+                       (if (null? z*)
+                           (mul y z)
+                           (mul y (f z (car z*) (cdr z*))))))]))
+
+  (define-expression-syntax *
+    (lambda (stx)
+      (syntax-case stx ()
+        [(_ x ...)
+         #'(mul (expression x) ...)])))
+
+  (define flatten-product
+    (lambda (x)
+      (if (product? x)
+          (let f ([y (product-left x)]
+                  [z (flatten-product (product-right x))])
+            (if (product? y)
+                (f (product-left y) (f (product-right y) z))
+                (make-product y z)))
+          x)))
+
+  ;; Sums
+
+  (define-record-type sum
+    (parent complex-expression)
+    (fields left right))
+
+  (define add
+    (case-lambda
+      [() 0]
+      [(x) x]
+      [(x y)
+       (if (eqv? y 0)
+           x
+           (make-sum x y))]
+      [(x y z . z*)
+       (make-sum x
+                 (let f ([y y] [z z] [z* z*])
+                   (if (null? z*)
+                       (add y z)
+                       (add y (f z (car z*) (cdr z*))))))]))
+
+  (define-expression-syntax +
+    (lambda (stx)
+      (syntax-case stx ()
+        [(_ x ...)
+         #'(add (expression x) ...)])))
+
+  (define flatten-sum
+    (lambda (x)
+      (if (sum? x)
+          (let f ([y (sum-left x)]
+                  [z (flatten-sum (sum-right x))])
+            (if (sum? y)
+                (f (sum-left y) (f (sum-right y) z))
+                (make-sum y z)))
+          x)))
+
+  (define summands
+    (lambda (x)
+      (cond
+       [(eqv? x 0) (list)]
+       [(sum? x)
+        (cons (sum-left x) (summands (sum-right x)))]
+       [else (list x)])))
+
+  (define distribute-product
+    (lambda (x)
+      (if (product? x)
+          (let ([y* (summands (product-left x))]
+                [z* (summands (distribute-product (product-right x)))])
+            (fold-right
+             (lambda (y x*)
+               (fold-right
+                (lambda (z x*)
+                  (add (make-product y z) x*))
+                x* z*))
+             0 y*))
+          x)))
+
+  ;; Output
 
   (define show
     (case-lambda
@@ -56,20 +197,42 @@
                  (show p x)
                  (get))]
          [else
-          (let wr ([x x])
-            (cond
-             [(not (expression? x))
-              (display x p)]
-             [(variable? x)
-              (wr (variable-name x))]
-             [(product? x)
-              (let [(x* (product-factors x))]
-                (wr "(")
-                (do ([x* (product-factors x) (cdr x*)]
-                     [sep "" "*"])
-                    ((null? x*))
-                  (wr sep)
-                  (wr (car x*)))
-                (wr ")"))]
-             [else
-              (assert #f)]))])])))
+          (let wr/rank ([x x] [rank 0])
+            (let wr ([x x])
+              (cond
+               [(not (complex-expression? x))
+                (display x p)]
+               [(variable? x)
+                (wr (variable-name x))]
+               [(product? x)
+                (when (fx>? rank 1)
+                  (wr "("))
+                (let f ([x x])
+                  (wr/rank (product-left x) 1)
+                  (wr "*")
+                  (let ([y (product-right x)])
+                    (cond
+                     [(product? y) (f y)]
+                     [else (wr/rank y 1)])))
+                (when (fx>? rank 1)
+                  (wr ")"))]
+               [(sum? x)
+                (when (fx>? rank 0)
+                  (wr "("))
+                (let f ([x x])
+                  (wr/rank (sum-left x) 1)
+                  (wr "+")
+                  (let ([y (sum-right x)])
+                    (cond
+                     [(sum? y) (f y)]
+                     [else (wr/rank y 1)])))
+                (when (fx>? rank 0)
+                  (wr ")"))]
+               [else
+                (assert #f)])))])]))
+
+  (record-writer (record-type-descriptor complex-expression)
+    (lambda (r p wr)
+      (display-string "#<expression " p)
+      (show p r)
+      (display-string ">" p))))
